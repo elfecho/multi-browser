@@ -13,21 +13,15 @@
 // ============================================================
 async function handleDownload(url, filename) {
   try {
-    // 尝试用 Electron 的方式（通过 chrome.runtime.sendMessage 或者其他方式）
-    // 但 background.js 是 Service Worker，没有 window，所以我们换一种方式
-    // 我们直接发起 fetch，然后用 Blob 下载，或者让 Electron 主进程处理
-    // 不过最简单的方式是，我们在 Electron 主进程里拦截 chrome.downloads.download！
-    // 或者我们直接用最原始的方式，让插件正常运行，然后我们在 Electron 主进程里监听 will-download！
-    // 好的，让我们恢复原来的代码，同时我们在主进程里设置 will-download！
     const downloadId = await chrome.downloads.download({
       url: url,
       filename: filename || 'doubao_' + Date.now() + '.mp4',
       saveAs: false,
       conflictAction: 'uniquify'
-    });
-    return { success: true, downloadId };
+    })
+    return { success: true, downloadId }
   } catch (e) {
-    return { success: false, error: e.message };
+    return { success: false, error: e.message }
   }
 }
 

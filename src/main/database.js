@@ -65,6 +65,25 @@ class Database {
         updated_at INTEGER NOT NULL
       )
     `);
+    
+    // 创建下载历史表
+    await this.run(`
+      CREATE TABLE IF NOT EXISTS download_history (
+        id TEXT PRIMARY KEY,
+        account_id TEXT NOT NULL,
+        video_id TEXT NOT NULL,
+        video_url TEXT NOT NULL,
+        filename TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        width INTEGER,
+        height INTEGER,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        UNIQUE(account_id, video_id)
+      )
+    `);
+    
     await this.persist();
   }
 

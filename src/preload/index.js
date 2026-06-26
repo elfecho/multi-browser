@@ -7,19 +7,22 @@ const api = {
     delete: (id) => ipcRenderer.invoke('accounts:delete', id)
   },
   browser: {
-    launch: (accountId) => ipcRenderer.invoke('browser:launch', accountId)
+    launch: (accountId) => ipcRenderer.invoke('browser:launch', accountId),
+    activate: (accountId) => ipcRenderer.invoke('browser:activate', accountId),
+    close: (accountId) => ipcRenderer.invoke('browser:close', accountId),
+    isRunning: (accountId) => ipcRenderer.invoke('browser:is-running', accountId),
+    selectImageFile: (file) => ipcRenderer.invoke('browser:select-image-file', file),
+    sendPrompt: (accountId, prompt, imagePath) => ipcRenderer.invoke('browser:send-prompt', accountId, prompt, imagePath)
   },
-  browserView: {
-    show: () => ipcRenderer.invoke('browser-view:show'),
-    hide: () => ipcRenderer.invoke('browser-view:hide'),
-    loadUrl: (url) => ipcRenderer.invoke('browser-view:load-url', url),
-    goBack: () => ipcRenderer.invoke('browser-view:go-back'),
-    goForward: () => ipcRenderer.invoke('browser-view:go-forward'),
-    reload: () => ipcRenderer.invoke('browser-view:reload'),
-    getUrl: () => ipcRenderer.invoke('browser-view:get-url')
+  downloads: {
+    get: (accountId) => ipcRenderer.invoke('downloads:get', accountId),
+    openDir: () => ipcRenderer.invoke('downloads:open-dir')
+  },
+  downloadHistory: {
+    getByAccount: (accountId) => ipcRenderer.invoke('download-history:get-by-account', accountId)
   },
   showCreateAccountDialog: () => ipcRenderer.invoke('show-create-account-dialog'),
-  handleDownload: (url, filename) => ipcRenderer.invoke('handle-file-download', url, filename)
+  onDownloadEvent: (callback) => ipcRenderer.on('download-event', (_event, data) => callback(data))
 };
 
 contextBridge.exposeInMainWorld('multiBrowser', api);

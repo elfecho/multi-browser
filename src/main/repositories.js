@@ -305,10 +305,99 @@ class ExtensionRepository {
   }
 }
 
+class DownloadHistoryRepository {
+  constructor(db) {
+    this.db = db;
+  }
+
+  async getByAccount(accountId) {
+    const rows = await this.db.all(
+      'SELECT * FROM download_history WHERE account_id = ? ORDER BY created_at DESC',
+      [accountId]
+    );
+    return rows;
+  }
+
+  async getByVideoId(accountId, videoId) {
+    const row = await this.db.get(
+      'SELECT * FROM download_history WHERE account_id = ? AND video_id = ?',
+      [accountId, videoId]
+    );
+    return row;
+  }
+
+  async create(input) {
+    const id = createId('dl');
+    const timestamp = now();
+    try {
+      await this.db.run(
+        `
+        INSERT INTO download_history
+          (id, account_id, video_id, video_url, filename, file_path, width, height, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        [
+          id,
+          input.account_id,
+          input.video_id,
+          input.video_url,
+          input.filename,
+          input.file_path,
+          input.width || null,
+          input.height || null,
+          input.status || 'pending',
+          timestamp
+        ]
+      );
+      return this.get(id);
+    } catch (e) {
+      // 如果因为 UNIQUE 约束失败，说明已经下载过了
+      if (e.message && e.message.includes('UNIQUE')) {
+        return await this.getByVideoId(input.account_id, input.video_id);
+      }
+      throw e;
+    }
+  }
+
+  async get(id) {
+    const row = await this.db.get('SELECT * FROM download_history WHERE id = ?', [id]);
+    return row;
+  }
+
+  async updateStatus(id, status, filePath = null) {
+    const updates = ['status = ?, updated_at = ?'];
+    const params = [status, now()];
+    
+    if (filePath) {
+      updates.push('file_path = ?');
+      params.push(filePath);
+    }
+    
+    if (status === 'completed') {
+      updates.push('completed_at = ?');
+      params.push(now());
+    }
+    
+    params.push(id);
+    
+    await this.db.run(
+      `UPDATE download_history SET ${updates.join(', ')} WHERE id = ?`,
+      params
+    );
+    return this.get(id);
+  }
+
+  async delete(id) {
+    const result = await this.db.run('DELETE FROM download_history WHERE id = ?', [id]);
+    return result.changes > 0;
+  }
+}
+
 module.exports = {
   AccountRepository,
   ProxyRepository,
   ExtensionRepository,
+  DownloadHistoryRepository,
   createId,
   parseProxy,
   parseExtension

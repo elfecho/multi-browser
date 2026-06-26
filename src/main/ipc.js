@@ -1,11 +1,7 @@
-const { ipcMain, dialog, BrowserWindow } = require('electron');
-const fs = require('fs-extra');
-const path = require('path');
+const { ipcMain, BrowserWindow } = require('electron');
 let accountRepo;
-let extensionRepo;
-let builtinExtensionsDir;
-let doubaoScript = '';
-let switchToAccountViewFunc = null;
+let browserMgr;
+let downloadHistoryRepo;
 let mainWindow = null;
 
 function setMainWindow(win) {
@@ -16,35 +12,18 @@ function setAccountRepository(repo) {
   accountRepo = repo;
 }
 
-function setExtensionRepository(repo) {
-  extensionRepo = repo;
-}
-
-function setBuiltinExtensionsDir(dir) {
-  builtinExtensionsDir = dir;
-}
-
-function setSwitchToAccountViewFunc(func) {
-  switchToAccountViewFunc = func;
-}
-
-async function initDoubaoScript() {
-  try {
-    const doubaoScriptPath = path.join(__dirname, '../../builtin-extensions/doubao-downloader.user.js');
-    if (await fs.pathExists(doubaoScriptPath)) {
-      doubaoScript = await fs.readFile(doubaoScriptPath, 'utf-8');
-      console.log('Loaded doubao script');
-    }
-  } catch (error) {
-    console.error('Failed to load doubao script:', error);
+function setBrowserManager(mgr) {
+  browserMgr = mgr;
+  // 覆盖 emitDownloadEvent 方法，以便发送 IPC 事件
+  if (browserMgr) {
+    const originalEmit = browserMgr.emitDownloadEvent.bind(browserMgr);
+    browserMgr.emitDownloadEvent = function(accountId, event) {
+      originalEmit(accountId, event);
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send('download-event', { accountId, ...event });
+      }
+    };
   }
-}
-
-function getCurrentBrowserView() {
-  if (global.currentAccountIdRef && global.currentAccountIdRef.current && global.accountBrowserViews) {
-    return global.accountBrowserViews.get(global.currentAccountIdRef.current);
-  }
-  return null;
 }
 
 function assertName(value, label) {
@@ -53,7 +32,7 @@ function assertName(value, label) {
   return text;
 }
 
-// 创建账号弹窗（简化版）
+// 创建账号弹窗
 async function showCreateAccountDialog() {
   // 获取现有账号，找到下一个可用的数字
   let nextNumber = 1;
@@ -159,9 +138,10 @@ async function showCreateAccountDialog() {
   });
 }
 
-function registerIpc({ accountRepository, proxyRepository, browserManager }) {
+function registerIpc({ accountRepository, browserManager, downloadHistoryRepository }) {
   accountRepo = accountRepository;
-  initDoubaoScript();
+  browserMgr = browserManager;
+  downloadHistoryRepo = downloadHistoryRepository;
 
   ipcMain.handle('accounts:list', async () => accountRepository.list());
 
@@ -173,132 +153,57 @@ function registerIpc({ accountRepository, proxyRepository, browserManager }) {
   });
 
   ipcMain.handle('accounts:delete', async (_event, id) => {
-    if (global.accountBrowserViews && global.accountBrowserViews.has(id)) {
-      const view = global.accountBrowserViews.get(id);
-      if (mainWindow) {
-        mainWindow.removeBrowserView(view);
-      }
-      global.accountBrowserViews.delete(id);
-      if (global.currentAccountIdRef && global.currentAccountIdRef.current === id) {
-        global.currentAccountIdRef.current = null;
-      }
-    }
     return accountRepository.delete(id);
   });
 
   // 新增账号弹窗
   ipcMain.handle('show-create-account-dialog', showCreateAccountDialog);
   
-  // 处理下载
-  ipcMain.handle('handle-file-download', async (_event, url, filename) => {
-    if (global.handleFileDownload) {
-      return await global.handleFileDownload(url, filename);
-    }
-    return { success: false, error: 'Download handler not available' };
+  // 启动隔离浏览器
+  ipcMain.handle('browser:launch', async (_event, accountId) => {
+    return await browserMgr.launch(accountId);
   });
 
-  // 简化的 browser launch
-  ipcMain.handle('browser:launch', async (_event, accountId) => {
-    const account = await accountRepository.get(accountId);
-    if (!account) throw new Error('Account not found');
+  // 关闭浏览器
+  ipcMain.handle('browser:close', async (_event, accountId) => {
+    return await browserMgr.close(accountId);
+  });
 
-    if (switchToAccountViewFunc) {
-      await switchToAccountViewFunc(accountId, account.profile_path);
-    } else if (global.accountBrowserViews && global.currentAccountIdRef) {
-      const win = BrowserWindow.getAllWindows()[0];
-      if (!win) throw new Error('Main window not found');
+  // 检查浏览器是否运行
+  ipcMain.handle('browser:is-running', async (_event, accountId) => {
+    return { running: browserMgr.isRunning(accountId) };
+  });
 
-      if (global.currentAccountIdRef.current && global.accountBrowserViews.has(global.currentAccountIdRef.current)) {
-        const currentView = global.accountBrowserViews.get(global.currentAccountIdRef.current);
-        currentView.setBounds({ x: 0, y: 0, width: 0, height: 0 });
-      }
+  // 选择并保存图片文件
+  ipcMain.handle('browser:select-image-file', async (_event, file) => {
+    return await browserMgr.saveImageFile(file);
+  });
 
-      let view;
-      if (global.accountBrowserViews.has(accountId)) {
-        view = global.accountBrowserViews.get(accountId);
-      } else {
-        const { BrowserView } = require('electron');
-        view = new BrowserView({
-          webPreferences: {
-            nodeIntegration: false,
-            contextIsolation: true,
-            sandbox: false,
-            partition: `persist:${accountId}`
-          }
-        });
-        const [width, height] = win.getContentSize();
-        const sidebarWidth = 320;
-        const controlsHeight = 60;
-        view.setBounds({ x: sidebarWidth, y: controlsHeight, width: width - sidebarWidth, height: height - controlsHeight });
-        win.addBrowserView(view);
-        global.accountBrowserViews.set(accountId, view);
-        
-        if (global.loadExtensionsFunc) {
-          try {
-            await global.loadExtensionsFunc(view.webContents.session);
-          } catch (e) {
-            console.error('Failed to load extensions:', e);
-          }
-        }
-      }
+  // 发送提示词到浏览器
+  ipcMain.handle('browser:send-prompt', async (_event, accountId, prompt, imagePath) => {
+    return await browserMgr.sendPrompt(accountId, prompt, imagePath);
+  });
 
-      const [width, height] = win.getContentSize();
-      const sidebarWidth = 320;
-      const controlsHeight = 60;
-      view.setBounds({ x: sidebarWidth, y: controlsHeight, width: width - sidebarWidth, height: height - controlsHeight });
-      global.currentAccountIdRef.current = accountId;
-    }
+  // 获取账号的下载记录
+  ipcMain.handle('downloads:get', async (_event, accountId) => {
+    return browserMgr.getDownloads(accountId);
+  });
 
-    const view = getCurrentBrowserView();
-    if (!view) throw new Error('Browser view not found');
-
-    let hasUrl = view.webContents.getURL();
-    if (!hasUrl || hasUrl === 'about:blank') {
-      let urlToLoad = account.last_url || account.environment.homepage || 'https://www.dola.com/chat/create-image';
-      if (!urlToLoad.startsWith('http://') && !urlToLoad.startsWith('https://')) {
-        urlToLoad = 'https://' + urlToLoad;
-      }
-      try {
-        await view.webContents.loadURL(urlToLoad);
-      } catch (error) {
-        console.error('Failed to load URL:', error);
-      }
-    }
-
-    const webContents = view.webContents;
-    if (!webContents.__listenersInitialized) {
-      webContents.__listenersInitialized = true;
-      
-      // 插件会完整运行，我们在主进程里用 will-download 来处理下载
-
-      if (doubaoScript) {
-        webContents.on('did-finish-load', async () => {
-          try {
-            const url = webContents.getURL();
-            if (url.includes('doubao.com') || url.includes('dola.com')) {
-              console.log('Injecting doubao script:', url);
-              await webContents.executeJavaScript(doubaoScript);
-              console.log('Doubao script injected');
-            }
-          } catch (error) {
-            console.error('Failed to inject doubao script:', error);
-          }
-        });
-      }
-
-      webContents.on('did-navigate', async (_event, url) => {
-        if (global.currentAccountIdRef && global.currentAccountIdRef.current === accountId && url && url.startsWith('http')) {
-          try {
-            await accountRepository.saveLastUrl(accountId, url);
-          } catch (error) {
-            console.error('Failed to save last URL:', error);
-          }
-        }
-      });
-    }
-
-    await accountRepository.markOpened(accountId);
-    return { accountId, status: 'running' };
+  // 打开下载目录
+  ipcMain.handle('downloads:open-dir', async () => {
+    const { shell } = require('electron');
+    await shell.openPath(browserMgr.downloadDir);
+    return { success: true };
+  });
+  
+  // 获取账号的下载历史
+  ipcMain.handle('download-history:get-by-account', async (_event, accountId) => {
+    return downloadHistoryRepo.getByAccount(accountId);
+  });
+  
+  // 激活浏览器窗口（如果已启动）
+  ipcMain.handle('browser:activate', async (_event, accountId) => {
+    return await browserMgr.activate(accountId);
   });
 }
 
@@ -306,7 +211,5 @@ module.exports = {
   registerIpc,
   setMainWindow,
   setAccountRepository,
-  setExtensionRepository,
-  setBuiltinExtensionsDir,
-  setSwitchToAccountViewFunc
+  setBrowserManager
 };

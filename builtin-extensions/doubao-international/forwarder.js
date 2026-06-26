@@ -1,5 +1,5 @@
 /**
- * forwarder.js - ISOLATED world
+ * forwarder.js — ISOLATED world
  * 消息桥接：content.js (MAIN) ↔ background.js (service worker)
  *
  * content.js 运行在 MAIN world，无法直接访问 chrome.runtime API，
@@ -11,8 +11,8 @@
 //  content → background 转发
 // ============================================================
 window.addEventListener('message', function (e) {
-  const msg = e.data;
-  if (!msg || typeof msg !== 'object') return;
+  const msg = e.data
+  if (!msg || typeof msg !== 'object') return
 
   // --- 下载请求 ---
   if (msg.type === '__DF_download') {
@@ -23,24 +23,24 @@ window.addEventListener('message', function (e) {
         window.postMessage(
           { type: '__DF_downloadResult', __cbId: msg.__cbId, success: res?.success, error: res?.error },
           '*'
-        );
+        )
       }
-    );
-    return;
+    )
+    return
   }
 
   // --- 视频发现（通知 background 统计）---
   if (msg.type === '__DF_videoFound') {
-    chrome.runtime.sendMessage({ type: '__DF_videoFound', messageId: msg.messageId, vid: msg.vid });
-    return;
+    chrome.runtime.sendMessage({ type: '__DF_videoFound', messageId: msg.messageId, vid: msg.vid })
+    return
   }
 
   // --- 获取视频URL（备用方案）---
   if (msg.type === '__DF_getVideoUrl') {
-    handleGetVideoUrl(msg.vid);
-    return;
+    handleGetVideoUrl(msg.vid)
+    return
   }
-});
+})
 
 // ============================================================
 //  background → content 转发
@@ -48,31 +48,31 @@ window.addEventListener('message', function (e) {
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   // 模式切换
   if (msg.type === '__DF_modeChanged') {
-    window.postMessage({ type: '__DF_modeChanged', value: msg.value }, '*');
-    sendResponse({ success: true });
-    return true;
+    window.postMessage({ type: '__DF_modeChanged', value: msg.value }, '*')
+    sendResponse({ success: true })
+    return true
   }
-});
+})
 
 // ============================================================
-//  初始化：读取 storage 中的 15 秒模式开关
+//  初始化：读取storage中的15秒模式开关
 // ============================================================
 chrome.storage.local.get('df_mode15s', function (result) {
-  const val = result.df_mode15s === true;
+  const val = result.df_mode15s === true
   if (val) {
-    window.postMessage({ type: '__DF_modeChanged', value: true }, '*');
+    window.postMessage({ type: '__DF_modeChanged', value: true }, '*')
   }
-});
+})
 
 // ============================================================
-//  视频URL获取（备用方案 —— 通过豆包分享API）
+//  视频URL获取（备用方案 — 通过豆包分享API）
 // ============================================================
 async function handleGetVideoUrl(vid) {
   // 通过 background 调用豆包分享API获取视频地址
   chrome.runtime.sendMessage(
     { type: '__DF_getVideoShareUrl', vid },
     function (result) {
-      window.postMessage({ type: '__DF_videoUrlBack', vid, result }, '*');
+      window.postMessage({ type: '__DF_videoUrlBack', vid, result }, '*')
     }
-  );
+  )
 }
