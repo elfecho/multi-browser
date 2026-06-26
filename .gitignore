@@ -1,0 +1,9 @@
+node_modules/
+dist/
+data/
+*.log
+.DS_Store
+Thumbs.db
+
+# 第三方插件，不提交到 git
+builtin-extensions/violentmonkey/
